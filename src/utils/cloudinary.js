@@ -21,4 +21,4 @@ const response =await  cloudinary.uploader.upload(localFilePath,{
              return null
         }
       }
-       
+      export{uploadOnCLoudinary} 
