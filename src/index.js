@@ -6,7 +6,7 @@ import { DB_NAME } from "./constatnts.js";
 import express from "express";
 
 import { app } from "./app.js";
-
+path:'./.env'
 connectDB()
   .then(() => {
     app.listen(process.env.PORT || 8000, () => {
