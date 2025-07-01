@@ -3,18 +3,45 @@ import { apierror } from "../utils/apierror.js";
 import { User } from "../model/user.model.js";
 import { uploadOnCLoudinary } from "../utils/cloudinary.js";
 import { apiresponse } from "../utils/apiresponse.js";
+import jwt from "jsonwebtoken";
 
+// Generate tokens for a user
+const generateAccessAndRefreshToken = async (userId) => {
+  try {
+    const user = await User.findById(userId);
+
+    if (!user) {
+      throw new apierror(404, "User not found when generating tokens");
+    }
+
+    if (typeof user.generateAccessToken !== 'function' || typeof user.generateRefreshToken !== 'function') {
+      throw new apierror(500, "User model is missing token generation methods");
+    }
+
+    const accessToken = user.generateAccessToken();
+    const refreshToken = user.generateRefreshToken();
+
+    user.refreshToken = refreshToken;
+    await user.save({ validateBeforeSave: false });
+
+    return { accessToken, refreshToken };
+  } catch (error) {
+    console.error("Error in generateAccessAndRefreshToken:", error);
+    throw new apierror(500, error.message || "Something went wrong");
+  }
+};
+
+
+
+// Register User
 const registerUser = asyncHandler(async (req, res) => {
   const { fullname, email, username, password } = req.body;
-
   console.log("email:", email);
 
-  // Validate fields
-  if ([fullname, email, username, password].some(field => field?.trim() === "")) {
+  if ([fullname, email, username, password].some(field => !field?.trim())) {
     throw new apierror(400, "All fields are required");
   }
 
-  // Check if user exists
   const existedUser = await User.findOne({
     $or: [{ username }, { email }]
   });
@@ -22,7 +49,6 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new apierror(409, "User with email or username already exists");
   }
 
-  // Handle uploaded files
   const avatarLocalPath = req.files?.avatar?.[0]?.path;
   const coverImagePath = req.files?.coverImage?.[0]?.path;
 
@@ -33,7 +59,6 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new apierror(400, "Avatar file is required");
   }
 
-  // Upload to Cloudinary
   const avatar = await uploadOnCLoudinary(avatarLocalPath);
   const coverImage = coverImagePath
     ? await uploadOnCLoudinary(coverImagePath)
@@ -43,29 +68,127 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new apierror(400, "Avatar upload failed");
   }
 
-  // Create user
   const newUser = await User.create({
     fullname,
     avatar: avatar.url,
-    coverimage: coverImage?.url || "",
+    coverImage: coverImage?.url || "",
     email,
     password,
     username: username.toLowerCase()
   });
 
-  // Fetch user without sensitive fields
   const createdUser = await User.findById(newUser._id).select(
-    "-password -refreshtoken"
+    "-password -refreshToken"
   );
 
   if (!createdUser) {
     throw new apierror(500, "Something went wrong");
   }
 
-  // Send response
   return res.status(201).json(
     new apiresponse(200, createdUser, "User registered successfully")
   );
 });
 
-export { registerUser };
+// Login User
+const loginUser = asyncHandler(async (req, res) => {
+  const { email, username, password } = req.body;
+
+  console.log("login req.body", req.body);
+
+  if ((!username && !email) || !password) {
+    throw new apierror(400, "Username/email and password are required");
+  }
+
+  const user = await User.findOne({
+    $or: [{ email }, { username }]
+  });
+  if (!user) {
+    throw new apierror(404, "User not found");
+  }
+
+  const isPassValid = await user.isPasswordCorrect(password);
+  if (!isPassValid) {
+    throw new apierror(401, "Invalid user credentials");
+  }
+
+  const { accessToken, refreshToken } = await generateAccessAndRefreshToken(user._id);
+
+  const safeUser = await User.findById(user._id).select("-password -refreshToken");
+
+  const options = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 24 * 60 * 60 * 1000  // 1 day
+  };
+
+  return res
+    .status(200)
+    .cookie("accessToken", accessToken, options)
+    .cookie("refreshToken", refreshToken, options)
+    .json(
+      new apiresponse(
+        200,
+        { user: safeUser, accessToken, refreshToken },
+        "User logged in successfully"
+      )
+    );
+});
+
+// Logout User
+const logoutUser = asyncHandler(async (req, res) => {
+  await User.findByIdAndUpdate(
+    req.user._id,
+    { $unset: { refreshToken: 1 } },
+    { new: true }
+  );
+
+  const options = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict"
+  };
+
+  return res
+    .status(200)
+    .clearCookie("accessToken", options)
+    .clearCookie("refreshToken", options)
+    .json(new apiresponse(200, null, "User logged out"));
+});
+
+const refreshAccessToken=asyncHandler(async(req,res)=>{
+  const incomeingRefranceToken =req.cookies.refreshtoken||req.body.refreshtoken
+  if(!incomeingRefranceToken){
+    throw new apierror(401,"unauthorized request ")
+  }
+  const decodedToken=jwt.verify(incomeingRefranceToken,
+    process.env.REFRESH_TOKEN_SECRET
+  )
+
+  const user= await User.findById(decodedToken?._id)
+  if(!user){
+    throw new apierror(401,"invalid refresh token")
+  }
+  if(incomeingRefranceToken!==user?.refreshToken){
+    throw new apierror(401,"refresh token is expired or used")
+  }
+   const options={
+    gttpOnly:true,
+    ecure:true
+   }
+   const{accessToken,newrefreshToken}=await generateAccessAndRefreshToken(user._id)
+
+   return res 
+   .status(200)
+   .cookie("accessToken", accessToken,options)
+   .cookie("refreshToken",newrefreshToken,options)
+   .json(
+    new apiresponse(
+      200,
+      {accessToken,newrefreshToken},
+      "Access token refreshed"
+    )
+   )
+})
+export { registerUser, loginUser, logoutUser,refreshAccessToken };
