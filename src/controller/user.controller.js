@@ -187,8 +187,108 @@ const refreshAccessToken=asyncHandler(async(req,res)=>{
     new apiresponse(
       200,
       {accessToken,newrefreshToken},
-      "Access token refreshed"
-    )
-   )
+      "Access token refreshe"))
 })
-export { registerUser, loginUser, logoutUser,refreshAccessToken };
+const changecrrpass=asyncHandler( async (req,res)=>{
+  const {oldpassword,newpassword}= req.body
+  const user = await User.findById(req.user?._id)
+  const isPasswordCorrect=await user.isPasswordCorrect(oldpassword)
+  if(!isPasswordCorrect){
+    throw new apierror(400,"invalid old password")
+  }
+
+  user.password=newpassword
+  await user.save({validateBeforeSave:false})
+  return res
+  .status(200)
+  .json(new apiresponse(200,{},"password changed"))
+ })
+
+ const getcurruser=asyncHandler(async(req,res)=>{
+  return res 
+  .status(200)
+  .json(200,req.user,"current user fetched successfully")
+ })
+const updateAcc =asyncHandler(async(req,res)=>{
+const {fullname,email}=req.body
+
+if(!fullname||!email){
+  throw new apierror(400,"all feild required")
+}
+User.findByIdAndUpdate(
+  req.user?._id,
+  {
+$set:{
+  fullname,
+  email: email
+}
+  },
+  {new:true}
+
+
+).select("-password")
+
+return res
+.status(200)
+.json(new apiresponse(200,user,"account details updated"))
+})
+
+const updateavatar=asyncHandler(async(req,res)=>{
+  const avatarLocalPath=  req.file?.path
+  if(!avatarLocalPath){
+
+    throw new apierror(400,"avatar file is missing")
+
+  }
+
+  if(!avatar.url){
+    throw new apierror(400,"error in uploading")
+  }
+
+const user=await User.findByIdAndUpdate(req.user?._id,
+
+  {
+    $set:{
+      avatar:avatar.url
+    }
+  },
+  {new: true}
+).selsect("-password")
+return res
+.status(200)
+.json(
+  new apiresponse(200,"avatar image updated")
+)
+})
+const updatecover=asyncHandler(async(req,res)=>{
+  const coverImagePath=  req.file?.path
+  if(!coverImagePath){
+
+    throw new apierror(400,"cover image file is missing")
+
+  }
+const coverImage=await uploadOnCLoudinary(coverImagePath)
+  if(!coverImage.url){
+    throw new apierror(400,"error in uploading")
+  }
+
+const user=await User.findByIdAndUpdate(req.user?._id,
+
+  {
+    $set:{
+      coverImage:coverImage.url
+    }
+  },
+  {new: true}
+).selsect("-password")
+return res
+.status(200)
+.json(
+  new apiresponse(200,"cover image updated")
+)
+
+})
+
+
+
+export { registerUser, loginUser, logoutUser,refreshAccessToken ,getcurruser,changecrrpass,updateAcc,updateavatar,updatecover};
